@@ -3,6 +3,7 @@
 import os
 import json
 import requests
+from time import sleep
 from os.path import join, dirname
 from dotenv import load_dotenv
 
@@ -39,10 +40,18 @@ class ForkMonitor:
                 """Get members of a given Organization"""
 
                 org_members = []
-                members = self.get_data(f'orgs/{self.org_name}/members')
+                page_number = 1
+                while True:
+                        # 100 members per page
+                        page_members = [collab['login'] for collab in self.get_data(f'orgs/{self.org_name}/members?per_page=100&page={page_number}')]
+                        if page_members:
+                                org_members.extend(page_members)
+                                sleep(0.05)
+                        else:
+                                # no members in the page
+                                break
 
-                for member in members:
-                        org_members.append(member['login'])
+                        page_number += 1
         
                 return org_members
 
@@ -82,7 +91,9 @@ class ForkMonitor:
  
                 for repo in dict_in.keys():
                         path.append(repo)
+                        # get assignees for each repo
                         collab = [collab['login'] for collab in self.get_data(f"repos/{repo}/assignees")]
+                        #  check for external users
                         diff_members = [member for member in collab if member not in self.org_members]
 
                         if diff_members:
