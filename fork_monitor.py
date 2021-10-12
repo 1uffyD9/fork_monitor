@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 
-import os
+import os, sys
 import json
 import requests
+import argparse
 from time import sleep
 from os.path import join, dirname
 from dotenv import load_dotenv
@@ -11,20 +12,36 @@ dotenv_path = join(dirname(__file__), '.env')
 load_dotenv(dotenv_path)        # take environment variables from .env.
 
 class ForkMonitor:
-        ADMIN = os.environ.get('USER')
+
         TOKEN = os.environ.get('TOKEN')
 
-        def __init__(self, org_name: str, repo: str) -> None:
-                self.repo = repo
-                self.org_name = org_name
-                self.org_members = self.get_members()
-                self.fork_tree = {
-                                f'{self.org_name}/{self.repo}' : dict()
-                        }
+        def __init__(self) -> None:
+                # get arguments
+                args = self.get_args()
+                self.org_name = args.organization
+                self.sleep = args.sleep
+
+                print("[!] Enumurating organization members..")
+                self.org_members = self.get_members(self.org_name)
+
+                print("[!] Enumurating organization repos..")
+                self.org_repos = self.get_repos(self.org_name)
+
+                self.fork_tree = dict()
                 self.fin_output = list()
 
-        def tmp_print(self, response: json):
+
+        def get_args(self) -> None:
+                parser = argparse.ArgumentParser(description="Simple Script to review contributors in forks", formatter_class=argparse.RawTextHelpFormatter)
+                parser.add_argument('-o', '--organization', type=str, help="specify the Organization", required=True)
+                parser.add_argument('--sleep', type=int, help="specify the delay between each request to the repo (default 3 seconds)", default=3)
+
+                return parser.parse_args()
+        
+
+        def tmp_print(self, response: json) -> None:
                 print(json.dumps(response, indent=2, sort_keys=True))
+
 
         def get_data(self, url: str) -> list:
                 """Making request to github APIs for given reletive URL"""
@@ -36,14 +53,42 @@ class ForkMonitor:
 
                 return json.loads(requests.get(f'https://api.github.com/{url}', headers=headers).text)
 
-        def get_members(self) -> list:
+
+        def get_repos(self, org_name: str) -> list:
+                """Get repos of a given Organization"""
+                org_repos = []
+                page_number = 1
+                while True:
+                        # 100 repos per page
+                        try:
+                                page_repos = [repo['full_name'] for repo in self.get_data(f'orgs/{org_name}/repos?per_page=100&page={page_number}')]
+                        except:
+                                sys.exit("[!] Error occured ! Recheck the token, organization and try again.")
+                        
+                        if page_repos:
+                                org_repos.extend(page_repos)
+                                sleep(0.05)
+                        else:
+                                # no members in the page
+                                break
+
+                        page_number += 1
+        
+                return org_repos
+
+
+        def get_members(self, org_name: str) -> list:   
                 """Get members of a given Organization"""
 
                 org_members = []
                 page_number = 1
                 while True:
                         # 100 members per page
-                        page_members = [collab['login'] for collab in self.get_data(f'orgs/{self.org_name}/members?per_page=100&page={page_number}')]
+                        try:
+                                page_members = [collab['login'] for collab in self.get_data(f'orgs/{org_name}/members?per_page=100&page={page_number}')]
+                        except:
+                                sys.exit("[!] Error occured ! Recheck the token, organization and try again.")
+
                         if page_members:
                                 org_members.extend(page_members)
                                 sleep(0.05)
@@ -66,12 +111,13 @@ class ForkMonitor:
         def build_forks_tree(self, dict_in: dict, path=[]) -> None:
                 """Build forks tree from a given source dictonary"""
 
-                for index, parent_repo in enumerate(dict_in):
+                for _, parent_repo in enumerate(dict_in):
 
                         forks_list = {}
                         try:
                                 # get git forks if repo exist
                                 forks_list = {repo['full_name']: dict() for repo in self.get_data(f'repos/{parent_repo}/forks')}
+                                sleep(self.sleep)
                         except:
                                 print("[!] Skipping : directory not found")
                                 continue
@@ -86,13 +132,16 @@ class ForkMonitor:
                                 path.pop()
 
 
-        def get_collab(self, dict_in: dict, path=[]) -> None:
+        def get_collab(self, dict_in: dict, path=[]):
                 """Get Collaborators of a given repo"""
  
                 for repo in dict_in.keys():
                         path.append(repo)
                         # get assignees for each repo
-                        collab = [collab['login'] for collab in self.get_data(f"repos/{repo}/assignees")]
+                        try:
+                                collab = [collab['login'] for collab in self.get_data(f"repos/{repo}/assignees")]
+                        except:
+                                print("[!] Error during user enumuration. Check if the token has correct privileges or user have access to the organization")
                         #  check for external users
                         diff_members = [member for member in collab if member not in self.org_members]
 
@@ -114,8 +163,11 @@ class ForkMonitor:
 
         def main(self):
 
-                # get source repos' forks
-                print("[!] Generating fork tree....")
+                for repo in self.org_repos:
+                        self.fork_tree.update({f'{repo}' : dict()})
+
+                # get org repos' forks
+                print("[!] Generating fork tree. This may take few minutes....")
                 for _ in self.build_forks_tree(self.fork_tree) : pass
                 self.tmp_print(self.fork_tree)
 
@@ -126,8 +178,6 @@ class ForkMonitor:
                 self.tmp_print(self.fin_output)
 
 if __name__ == "__main__":
-        org_name = os.environ.get('ORGNAME')
-        repo = os.environ.get('REPO')
-        
-        fm = ForkMonitor(org_name, repo)
+
+        fm = ForkMonitor()
         fm.main()
