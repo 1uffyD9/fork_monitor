@@ -175,7 +175,10 @@ class ForkMonitor:
                 for repo, path, diff_colab in self.get_collab(self.fork_tree):
                         self.generate_final_out(repo, path, diff_colab)
 
-                self.tmp_print(self.fin_output)
+                if self.fin_output: 
+                        self.tmp_print(self.fin_output)
+                else:
+                        sys.exit("[!] No external contributors were found")
 
 if __name__ == "__main__":
 
